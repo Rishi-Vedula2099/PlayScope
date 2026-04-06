@@ -1,0 +1,15 @@
+# PlayScope
+
+node_modules/
+.next/
+__pycache__/
+*.pyc
+.env
+storage/
+*.pt
+*.onnx
+output/
+.venv/
+venv/
+dist/
+build/
