@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL Database ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: playscope-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: playscope
+      POSTGRES_USER: playscope
+      POSTGRES_PASSWORD: playscope
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playscope"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (for future Celery integration) ──
+  redis:
+    image: redis:7-alpine
+    container_name: playscope-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: playscope-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://playscope:playscope@postgres:5432/playscope
+      DATABASE_SYNC_URL: postgresql://playscope:playscope@postgres:5432/playscope
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
+      AI_ENGINE_URL: http://ai-engine:8001
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - upload_storage:/app/storage/uploads
+      - results_storage:/app/storage/results
+
+  # ── AI Engine ──
+  ai-engine:
+    build:
+      context: ./ai-engine
+      dockerfile: Dockerfile
+    container_name: playscope-ai
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - upload_storage:/app/uploads:ro
+      - ai_output:/app/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── Nginx Reverse Proxy ──
+  nginx:
+    image: nginx:alpine
+    container_name: playscope-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  upload_storage:
+  results_storage:
+  ai_output:
